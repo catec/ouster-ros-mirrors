@@ -1,336 +1,157 @@
-# Official ROS driver for Ouster sensors
+# Mirror-Based LiDAR Reconstruction for Ouster ROS 2
 
-[ROS1 (melodic/noetic)](https://github.com/ouster-lidar/ouster-ros/tree/master) |
-[ROS2 (rolling/humble/jazzy/kilted/lyrical)](https://github.com/ouster-lidar/ouster-ros/tree/ros2) |
-[ROS2 (galactic/foxy)](https://github.com/ouster-lidar/ouster-ros/tree/ros2-foxy)
+This repository extends the official [Ouster ROS driver](https://github.com/ouster-lidar/ouster-ros/tree/ros2) with reconstruction through configurable planar mirrors. Fixed mirrors redirect selected beams toward regions outside the native field of view (FoV). Their optical paths are incorporated into the driver's direction-and-offset lookup table (LUT), so direct and reflected measurements use the same affine coordinate calculation, without per-point ray tracing or an external correction node.
 
-<p style="float: right;"><img width="20%" src="docs/images/logo.png" /></p>
+![Two refinery scenes side by side: mirror-reflected structures above the UAV on the left and below it on the right.](docs/images/refinery_mirrors_comparison.gif)
 
-| ROS Version | Build Status (Linux) |
-|:-----------:|:------:|
-| ROS1 (melodic/noetic) | [![melodic/noetic](https://github.com/ouster-lidar/ouster-ros/actions/workflows/docker-image.yml/badge.svg?branch=master)](https://github.com/ouster-lidar/ouster-ros/actions/workflows/docker-image.yml)
-| ROS2 (rolling/humble/jazzy/kilted/lyrical) | [![rolling/humble/jazzy/kilted/lyrical](https://github.com/ouster-lidar/ouster-ros/actions/workflows/docker-image.yml/badge.svg?branch=ros2)](https://github.com/ouster-lidar/ouster-ros/actions/workflows/docker-image.yml)
-| ROS2 (galactic/foxy) | [![galactic/foxy](https://github.com/ouster-lidar/ouster-ros/actions/workflows/docker-image.yml/badge.svg?branch=ros2-foxy)](https://github.com/ouster-lidar/ouster-ros/actions/workflows/docker-image.yml)
+For standard sensor setup, supported devices, network configuration and other ROS 2 functionality, refer to the [upstream documentation](https://github.com/ouster-lidar/ouster-ros/tree/ros2).
 
-- [Official ROS driver for Ouster sensors](#official-ros-driver-for-ouster-sensors)
-  - [Overview](#overview)
-  - [Supported Devices](#supported-devices)
-  - [Requirements](#requirements)
-    - [Linux](#linux)
-    - [Windows](#windows)
-    - [Mac](#mac)
-  - [Getting Started](#getting-started)
-    - [Installation via apt (Recommended)](#installation-via-apt-recommended)
-    - [Building from Source](#building-from-source)
-  - [Usage](#usage)
-    - [Launching Nodes](#launching-nodes)
-      - [Sensor Mode](#sensor-mode)
-      - [Recording Mode](#recording-mode)
-      - [Replay Mode](#replay-mode)
-        - [PCAP Replay Mode](#pcap-replay-mode)
-      - [Multicast Mode (experimental)](#multicast-mode-experimental)
-    - [Invoking Services](#invoking-services)
-      - [GetMetadata](#getmetadata)
-      - [GetConfig](#getconfig)
-      - [SetConfig](#setconfig)
-      - [Reset](#reset)
-    - [Driver Parameters](#driver-parameters)
-  - [License](#license)
+## Sensor and mirror assembly
 
+<p align="center">
+  <img src="docs/images/uav_mirror_assembly.jpg" width="600" alt="Close-up of the Ouster OS1-64 and the two planar mirrors mounted beneath the UAV.">
+</p>
 
-## Overview
+*Ouster OS1-64 with the dual-mirror assembly mounted upside down beneath the UAV.*
 
-This ROS package provide support for all Ouster sensors with FW v2.0 or later targeting ros2 distros.
-Upon launch the driver will configure and connect to the selected sensor device, once connected the 
-driver will handle incoming IMU and lidar packets, decode lidar frames and publish corresponding ROS
-messages on the topics of `/ouster/imu` and `/ouster/points`. In the case the used sensor supports
-dual return and it was configured to use this capability, then another topic will published under the
-name `/ouster/points2` which corresponds to the second point cloud.
+## Mirror-based reconstruction
 
+At initialization, the processor intersects each native beam with the configured finite mirror polygons. A valid intersection replaces that beam's LUT coefficients with their reflected equivalents. Beams that miss every mirror retain their native coefficients. If several mirrors intersect the same incident ray, the nearest positive intersection is selected.
 
-## Supported Devices
-The driver supports the following list of Ouster sensors:
-- [OS0](https://ouster.com/products/hardware/os0-lidar-sensor)
-- [OS1](https://ouster.com/products/hardware/os1-lidar-sensor)
-- [OS2](https://ouster.com/products/hardware/os2-lidar-sensor)
-- [OSDome](https://ouster.com/products/hardware/osdome-lidar-sensor)
+<p align="center">
+  <img src="docs/images/paper_optical_geometry.png" width="650" alt="Side view of the dual-mirror assembly, with the beam origin B, mirror intersection I, incident and reflected directions, and reconstructed endpoint.">
+</p>
 
-You can obtain detailed specs sheet about the sensors and obtain updated FW through the website
-[downloads](https://ouster.com/downloads) section.
+For a native LUT entry `x = r d + o` and a mirror plane through `p` with unit normal `n`, the reflected coefficients are:
 
-## Requirements
-This branch is only intended for use with **Rolling**, **Humble**,  **Jazzy**,  **Kilted** and **Lyrical**
-ROS 2 distros. Please refer to ROS 2 online documentation on how to setup ROS on your machine before
-proceeding with the remainder of this guide.
-
-> **Note**  
-> If you have _rosdep_ tool installed on your system you can then use the following command to get all
-    required dependencies:  
-    ```
-    rosdep install --from-paths $OUSTER_ROS_PATH -y --ignore-src
-    ```
-
-### Linux
-
-In addition to the base ROS installation, the following ROS packages are required:
-```bash
-sudo apt install -y             \
-    ros-$ROS_DISTRO-pcl-ros     \
-    ros-$ROS_DISTRO-tf2-eigen   \
-    ros-$ROS_DISTRO-rviz2
-```
-where `$ROS_DISTRO` can be either ``rolling``, ``humble``, ``jazzy``, ``kilted`` or ``lyrical``.
-
-> **Note**  
-> Installing `ros-$ROS_DISTRO-rviz` package is optional in case you didn't need to visualize the
-> point cloud using rviz but remember to always set `viz` launch arg to `false`.
-  
-The following packages are also required
-```bash
-sudo apt install -y         \
-    build-essential         \
-    libeigen3-dev           \
-    libjsoncpp-dev          \
-    libspdlog-dev           \
-    libcurl4-openssl-dev    \
-    cmake                   \
-    python3-colcon-common-extensions
-```
-> **Note**  
-> You may choose a different _ssl_ backend for the _curl_ library such as `libcurl4-gnutls-dev` or
-> `libcurl4-nss-dev`
-
-> **Note**  
-> To use the PCAP replay mode you need to have `libpcap-dev` installed
-
-### Windows
-TBD
-
-
-### Mac
-TBD
-
-
-## Getting Started
-
-### Installation via apt (Recommended)
-The simplest way to install the driver is directly from the ROS package index using `apt`:
-
-```bash
-sudo apt install ros-${ROS_DISTRO}-ouster-ros
+```text
+d_mirror = d - 2 n (n · d)
+o_mirror = o - 2 n (n · (o - p))
+x_mirror = r d_mirror + o_mirror
 ```
 
-where `${ROS_DISTRO}` is one of ``rolling``, ``humble``, ``jazzy``, ``kilted`` or ``lyrical``.
+Here `r` is the original integer range, `d` includes its conversion to meters, and `o` and `p` are expressed in meters. The finite-footprint test uses the physical beam origin and the SDK's range-origin correction. A precomputed minimum range rejects measurements whose optical path ends before reaching the mirror.
 
-> **Note**
-> There may be a delay of a few weeks between a new release on the
-> [ros2 branch](https://github.com/ouster-lidar/ouster-ros/tree/ros2) and its availability
-> in the ROS package index. If you need the latest features or bug fixes, consider building
-> from source as described below.
+The LUT is computed once from the sensor metadata and fixed mirror geometry. XYZ evaluation retains three multiplications and three additions per point; validity checks and packing `mirror_id` add processing and memory copying. The Ouster SDK is unchanged.
 
+## Installation
 
-### Building from Source
-If you need the latest features or wish to contribute to the driver, you can build it from source.
-To build the driver using ROS2 you need to clone the project into the `src` folder of a ros2
-workspace as shown below:
+The extension has been built and tested with **ROS 2 Humble**. Build this mirror-enabled checkout from source.
+
+### Download the repository
 
 ```bash
-mkdir -p ros2_ws/src && cd ros2_ws/src
-git clone -b ros2 --recurse-submodules https://github.com/ouster-lidar/ouster-ros.git
+mkdir -p ~/ws/src
+cd ~/ws/src
+git clone --branch main --recurse-submodules https://github.com/catec/ouster-ros-mirrors.git ouster-ros
+cd ~/ws
 ```
 
-Next to compile the driver you need to source the ROS environemt into the active termainl:
-```bash
-source /opt/ros/<ros-distro>/setup.bash # replace ros-distro with 'rolling', 'humble', 'jazzy', `kilted` or `lyrical`.
-```
-
-Finally, invoke `colcon build` command from within the catkin workspace as shown below:
-```bash
-cd ros2_ws
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
-```
-> **Note**  
-> Specifying `Release` as the build type is important to have a reasonable performance of the driver.
-
-> **Note**  
-> For ROS2 we recommend using **CycloneDDS** over **FastDDS**, through out Galactic, Foxy, Humble distros.  
-> **FastDDS** is usually the default ros middleware on most platforms, please follow the
-[Guide](https://docs.ros.org/en/humble/Installation/DDS-Implementations/Working-with-Eclipse-CycloneDDS.html)
-to learn how to enable **CycloneDDS** on your platform.  
-> The **Zeonh** ROS middleware is now available for use with ouster-ros driver from Humble and afterwards
-> (exlcuding Iron). Zenoh have received great feedback from the ROS community but that's in general, we don't
-> have a comparative analysis against the other middlewares, to enable Zenoh:
-> ```bash
-> sudo apt install ros-${ROS_DISTRO}-rmw-zenoh-cpp
-> export RMW_IMPLEMENTATION=rmw_zenoh_cpp
-> ```
-> then follow the instructions here and rebuild the ouster-ros driver (clean build).
-
-
-Once the build succeeds, you must source the _install_ folder of your ros2 workspace to add launch
-commands to your environment:
-```bash
-source ros2_ws/install/setup.bash
-```
-
-## Usage
-
-### Launching Nodes
-The package supports three modes of interaction, you can connect to a _live sensor_, _replay_ a recorded
-bag or _record_ a new bag file using the corresponding launch files. Recently, we have added a new mode
-that supports multicast. The commands are listed below, for convenience we do provide both launch file
-formats (xml and python) but the python format is the preferred method:
-
-#### Sensor Mode
-To connect to a live sensor you use the following launch file
-```bash
-ros2 launch ouster_ros sensor.launch.xml    \
-    sensor_hostname:=<sensor host name>
-```
-The equivalent python launch file is:
-```bash
-ros2 launch ouster_ros driver.launch.py    \
-    params_file:=<path to params yaml file>
-```
-If you don't pass a `params_file` then the file located at `ouster/config/driver_params.yaml` will be used. Note that in
-the params you can start with default options for everything except the `sensor_hostname` param which you should adjust
-to match the hostname or ip address of the Ouster sensor you are trying to connect to.
-
-> **Note**:
-> If you observe parts of the scan missing is missing, this suggests having a lots of dropped packets
-> It is recommended that you increase the maximum allowed size for receive memory buffers in network
-> subsystem and tune packet fragmentation settings, you can do so by running the script `network-configure.bash` found
-> under `util`.
-
-**comptability mode**
-If you are migrating from https://github.com/ros-drivers/ros2_ouster_drivers to the official ouster drivers
-we supply you with a file `driver_launch.py` which provides users with same topic name and accepts the same
-parameter file `community_driver_config.yaml`. Please note that this is provided for backward compatibilty
-it may not be maintained in the future, so it would be better to update to the new format `driver_params.yaml`
-which offers the same options and more.
-
-#### Recording Mode
-> Note
-> As of package version 8.1, specifiying metadata file is optional since the introduction of the
-> metadata topic
-```bash
-ros2 launch ouster_ros record.launch.xml    \
-    sensor_hostname:=<sensor host name>     \
-    bag_file:=<optional bag file name>      \
-    metadata:=<json file name>              # optional
-```
-
-#### Replay Mode
-> Note
-> As of package version 8.1, specifiying metadata file is optional if the bag file being replayed
-> already contains the metadata topic
+If you already have this repository checked out in a ROS workspace, use that workspace and initialize its submodules:
 
 ```bash
-ros2 launch ouster_ros replay.launch.xml    \
-    bag_file:=<path to rosbag file>         \
-    metadata:=<json file name>              # optional if bag file has /metadata topic
+git -C src/ouster-ros submodule update --init --recursive
 ```
 
-##### PCAP Replay Mode
-> Note
-> To use this feature you need to compile the driver with `BUILD_PCAP` option enabled
+### Install dependencies and build
+
+With ROS 2 Humble and `rosdep` installed and initialized, run the following from the workspace root:
+
 ```bash
-ros2 launch ouster_ros replay_pcap.launch.xml   \
-    pcap_file:=<path to ouster pcap file>       \
-    metadata:=<json file name>              # required
+source /opt/ros/humble/setup.bash
+rosdep update
+rosdep install --from-paths src --ignore-src --rosdistro humble -y
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+source install/setup.bash
 ```
 
-#### Multicast Mode (experimental)
-The multicast launch mode supports configuring the sensor to broadcast lidar packets from the same
-sensor (live) to multiple active clients. You initiate this mode by using `sensor_mtp.launch.xml`
-file to start the node. You will need to specify a valid multicast group for the **udp_dest**
-argument which the sensor is going to broadcast data to it. You will also need to set **mtp_main**
-argument to **true**, this is need to configure the sensor with the specified **udp_dest** and any
-other sensor settings. You can control on which ip (IP4 only) you wish to receive the data on this
-machine from the multicast group using the **mtp_dest** argument as follows:
+Use the upstream [requirements](https://github.com/ouster-lidar/ouster-ros/tree/ros2#requirements) for general system prerequisites. RViz is optional when launching with `viz:=false`.
+
+## Configuration and execution
+
+The extension is available in both `os_driver` for a live sensor and `os_cloud` for separate processing of raw packets. Configure these two startup parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `mirror_names` | String array | Unique names in `mirror_id` order. An empty array disables reconstruction. |
+| `mirror_corners` | Double array | Four consecutive XYZ vertices per mirror: 12 values for each entry in `mirror_names`. |
+
+Vertices must follow the perimeter of a planar, convex, nondegenerate quadrilateral; either winding is accepted. Coordinates are **meters in the sensor's LIDAR frame** (`lidar_frame`, normally `os_lidar`), including when the output cloud is transformed into another frame. There is no hard-coded channel count, scan width, world orientation or two-mirror restriction.
+
+The [dual-mirror example](ouster-ros/config/mirror_example.yaml) is a standalone configuration containing all parameters from `driver_params.yaml`, with our mirror geometry enabled and `SCAN`/`IMG` disabled. Both mirrors' corner coordinates are already supplied, and the output uses the LiDAR frame:
+
+```yaml
+/**:
+  ros__parameters:
+    sensor_hostname: <SENSOR_HOSTNAME>
+    point_cloud_frame: os_lidar
+    point_type: original
+    proc_mask: IMU|PCL|RAW|TLM
+    mirror_names: [m_plus, m_minus]
+    # mirror_corners: 12 values per mirror; see the complete example file.
+```
+
+The complete example file contains the remaining driver parameters and corner coordinates. For our setup, change only `sensor_hostname` before launching. For a different assembly, replace the corners with its measured geometry in the LIDAR frame. Names are labels; they do not impose a reflection direction. Geometry is read-only after startup, so restart the node after changing it.
+
+The standard [driver_params.yaml](ouster-ros/config/driver_params.yaml) leaves mirrors disabled. Copying the two mirror parameters into your own driver YAML also enables the extension. To disable it, leave `mirror_names` and `mirror_corners` empty.
+
+### Live sensor
+
+From the built workspace, copy our complete configuration:
+
 ```bash
-roslaunch ouster_ros sensor_mtp.launch.xml  \
-    sensor_hostname:=<sensor host name>     \
-    udp_dest:=<multicast group ip (ipv4)>   \
-    mtp_main:=true                          \
-    mtp_dest:=<client ip to receive data>   # mtp_dest is optional
+cp src/ouster-ros/ouster-ros/config/mirror_example.yaml mirror_params.yaml
 ```
-Using a different machine that belongs to the same netwok subnet, you can start another instance of
-the client to start receiving sensor messages through the multicast group as shown below (note that
-**mtp_main** is set to **false**):
+
+Set `sensor_hostname` in `mirror_params.yaml` to your sensor's hostname or IP address, then launch with the supplied dual-mirror geometry:
+
 ```bash
-roslaunch ouster_ros sensor_mtp.launch.xml  \
-    sensor_hostname:=<sensor host name>     \
-    udp_dest:=<multicast group ip (ipv4)>   \
-    mtp_main:=false                         \
-    mtp_dest:=<client ip to receive data>   # mtp_dest is optional
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch ouster_ros driver.launch.py params_file:="$PWD/mirror_params.yaml" viz:=false
 ```
 
-> **Note:** 
-> In both cases the **mtp_dest** is optional and if left unset the client will utilize the first
-available interface.
+## Point-cloud output
 
-### Invoking Services
-To execute any of the following service, first you need to open a new terminal
-and source the ros2 workspace again by running the command
-`source ros2_ws/install/setup.bash` 
-#### GetMetadata
-To get metadata while connected to a live sensor or during a replay session invoke
-the following command:
+With mirrors configured, each point in `/ouster/points` includes an additional **`UINT16` field named `mirror_id`**. The same field is included in `/ouster/points2` for dual-return operation.
+
+| `mirror_id` | Meaning |
+|---|---|
+| `0` | Native direct beam. |
+| `1..N` | Beam assigned to `mirror_names[mirror_id - 1]`. |
+
+The ID stays attached to its point through destaggering, vertical reduction and organized or unorganized output. No separate index topic is needed. It describes the beam path, not return validity: an invalid organized point can have a nonzero ID and NaN coordinates. Unorganized output omits invalid points as usual.
+
+Only XYZ is reconstructed. Other fields supplied by the selected `point_type` retain their values, including timestamps, native ring, original range, signal/intensity and reflectivity.
+
+With no mirrors configured, the native LUT and cloud schema are unchanged. Downstream code that converts messages to a fixed PCL point type may discard `mirror_id`. Preserve the field explicitly when it is needed.
+
+## Limitations and testing
+
+The model assumes fixed planar mirrors, a single specular reflection and a reciprocal return path. It does not model multiple bounces, partial beam interception, propagation through a glass substrate, multipath or occlusion by the mounting structure.
+
+Only **PointCloud2** geometry is remapped. Native rings and adjacent range-image cells do not necessarily represent adjacent outgoing directions across a mirror boundary. Downstream algorithms should use the reconstructed coordinates accordingly.
+
+Run the unit and integration tests from the workspace root after building with `BUILD_TESTING=ON`:
+
 ```bash
-ros2 service call /ouster/get_metadata ouster_srvs/srv/GetMetadata
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+colcon test --packages-select ouster_ros --event-handlers console_direct+
+colcon test-result --verbose
 ```
 
-#### GetConfig
-To get the current config of a live sensor, invoke the command:
-```bash
-ros2 service call /ouster/get_config ouster_srvs/srv/GetConfig
-```
+## Acknowledgments and license
 
-#### SetConfig
-To change config via a file while connected to a live sensor, invoke the command:
-```bash
-ros2 service call /ouster/set_config ouster_srvs/srv/SetConfig \
-    "{config_file: 'some_config.json'}"
-```
+This extension builds on the Ouster ROS driver and Ouster SDK developed by **Ouster, Inc. and contributors**. General driver functionality remains documented and maintained in the [official repository](https://github.com/ouster-lidar/ouster-ros).
 
-#### Reset
-To reset the new reset service, execute the following commnad:
-```bash
-ros2 service call /ouster/reset std_srvs/srv/Empty
-```
-When this service is invoked the client should stop streaming, dispose current
-connection, reset the sensor and reconnect again. 
+The original copyright notices and [license](LICENSE), including the BSD-3-Clause terms and bundled third-party notices, are retained.
 
-> **Note**
-> Changing settings is not yet fully support during a reset operation (more on this)
+## Contact and contributions
 
-### Driver Parameters
-The driver has several parameters that allow you to customize its behavior, all of
-these parameters are defined with the `driver_params.yaml` file found under `config`
-folder. The only required parameter is `sensor_hostname` which sets the sensor
-hostname or ip that you want to connect to through ouster-ros driver.
+Questions about the mirror extension? Contact David Tejero Ruiz
+([dtejero@catec.aero](mailto:dtejero@catec.aero)), CATEC.
 
-Other notable parameters include:
-* **point_type**: This parameter allows to customize the point cloud that the
-  driver produces through its `/ouster/points` topics. Choose one of the following
-  values:
-  - `original`: This uses the original point representation `ouster_ros::Point`
-           of the ouster-ros driver.
-  - `native`: directly maps all fields as published by the sensor to an
-           equivalent point cloud representation with the additon of ring
-           and timestamp fields.
-  - `xyz`: the simplest point type, only has {x, y, z}
-  - `xyzi`: same as xyz point type but adds intensity (signal) field. this
-           type is not compatible with the low data profile.
-  - `xyzir`: same as xyzi type but adds ring (channel) field.
-          this type is same as Velodyne point cloud type
-          this type is not compatible with the low data profile.
+Found a bug or have a feature request? Open an issue!
 
-This is not a comprehenisve list of all the parameters that the driver supports
-for more detailed list please refer to the `config/driver_params.yaml` file.
-
-For further detailed instructions about the driver refer to the [main guide](./docs/index.rst)
-
-## License
-[License File](./LICENSE)
+Want to contribute? Submit a pull request!

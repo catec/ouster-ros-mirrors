@@ -143,3 +143,33 @@ TEST_F(PointCloudComposeTest, PointCloudProcessorRejectsPixelShiftSizeMismatch) 
     info.format.pixel_shift_by_row.pop_back();
     EXPECT_THROW(make_processor(info), std::invalid_argument);
 }
+
+TEST_F(PointCloudComposeTest, OptionalWindowSupportsOldAndCurrentFirmware) {
+    for (bool has_window : {false, true}) {
+        auto info = default_sensor_info(LidarMode::_512x10);
+        info.image_rev = has_window ? "v3.2.0" : "v2.2.0";
+        info.format.columns_per_frame = 8;
+        info.format.pixels_per_column = 4;
+        info.format.pixel_shift_by_row.assign(4, 0);
+        info.format.udp_profile_lidar = UDPProfileLidar::RNG19_RFL8_SIG16_NIR16_DUAL;
+        LidarScan scan(info);
+        ASSERT_EQ(scan.has_field(ChanField::WINDOW), has_window);
+        scan.field<uint32_t>(ChanField::RANGE).setConstant(1000);
+        scan.field<uint16_t>(ChanField::SIGNAL).setConstant(42);
+        if (has_window) scan.field<uint8_t>(ChanField::WINDOW).setConstant(3);
+        PointCloudXYZf points(32, 3);
+        points.setZero();
+        Cloud<Point_RNG19_RFL8_SIG16_NIR16_DUAL> cloud(8, 4);
+        Point_RNG19_RFL8_SIG16_NIR16_DUAL staging;
+        scan_to_cloud_f<Profile_RNG19_RFL8_SIG16_NIR16_DUAL.size(),
+                        Profile_RNG19_RFL8_SIG16_NIR16_DUAL>(
+            cloud, staging, points, 0, scan, info.format.pixel_shift_by_row,
+            true, false, 1);
+        ASSERT_EQ(cloud.size(), 32u);
+        for (const auto& point : cloud) {
+            EXPECT_EQ(point.range, 1000u);
+            EXPECT_EQ(point.signal, 42u);
+            EXPECT_EQ(point.window, has_window ? 3u : 0u);
+        }
+    }
+}

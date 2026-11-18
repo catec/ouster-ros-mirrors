@@ -72,7 +72,16 @@ void map_lidar_scan_fields_to_tuple(Tuple& tp, const ouster::sdk::core::LidarSca
             std::remove_pointer_t<std::tuple_element_t<Index, Tuple>>>;
         static_assert(std::is_same_v<ElementType, FieldType>,
                       "tuple element, field element types mismatch!");
-        std::get<Index>(tp) = ls.field<FieldType>(Table[Index].first).data();
+        if (Table[Index].first == ouster::sdk::core::ChanField::WINDOW &&
+            !ls.has_field(Table[Index].first)) {
+            // Firmware before 3.2 has no WINDOW field. Keep the ROS point
+            // layout, but do not request a channel omitted by the SDK.
+            static thread_local std::vector<FieldType> no_window;
+            no_window.resize(ls.w * ls.h, 0);
+            std::get<Index>(tp) = no_window.data();
+        } else {
+            std::get<Index>(tp) = ls.field<FieldType>(Table[Index].first).data();
+        }
         map_lidar_scan_fields_to_tuple<Index + 1, N, Table>(tp, ls);
     }
 }

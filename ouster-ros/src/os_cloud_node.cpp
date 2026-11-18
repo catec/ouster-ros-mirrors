@@ -26,6 +26,7 @@
 #include "laser_scan_processor.h"
 #include "point_cloud_processor_factory.h"
 #include "telemetry_handler.h"
+#include "mirror_parameters.h"
 
 namespace ouster_ros {
 
@@ -70,6 +71,8 @@ class OusterCloud : public OusterProcessingNodeBase {
         declare_parameter("v_reduction", 1);
         declare_parameter("min_scan_valid_columns_ratio", 0.0);
         declare_parameter("mask_path", "");
+        declare_mirror_parameters(*this);
+        read_mirror_parameters(*this);  // Fail early on malformed geometry.
     }
 
     void metadata_handler(
@@ -177,7 +180,7 @@ class OusterCloud : public OusterProcessingNodeBase {
                     [this](PointCloudProcessor_OutputType msgs) {
                         for (size_t i = 0; i < msgs.size(); ++i)
                             lidar_pubs[i]->publish(*msgs[i]);
-                    }
+                    }, read_mirror_parameters(*this)
                 )
             );
 

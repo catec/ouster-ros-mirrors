@@ -143,6 +143,7 @@ set(OUSTER_TARGET_LINKS ouster_client)
 add_library(ouster_ros_library SHARED
   src/impl/file_util.cpp
   src/os_ros.cpp
+  src/mirror_lut.cpp
 )
 
 set(ouster_ros_library_deps
@@ -282,6 +283,7 @@ if(BUILD_TESTING)
     test/point_accessor_test.cpp
     test/point_transform_test.cpp
     test/point_cloud_compose_test.cpp
+    test/mirror_lut_test.cpp
   )
   if(TARGET ${PROJECT_NAME}_test)
     target_include_directories(${PROJECT_NAME}_test PRIVATE

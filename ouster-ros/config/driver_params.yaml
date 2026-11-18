@@ -88,6 +88,11 @@ ouster/os_driver:
     # generating PointCloud2 or LaserScan messages, select between the values of
     # lidar_frame and sensor_frame.
     point_cloud_frame: os_lidar
+    # Optional planar mirrors: empty by default, preserving upstream behavior.
+    # See mirror_example.yaml: 12 corner coordinates per mirror, in meters in
+    # the LIDAR frame. Geometry is read-only after node startup.
+    # mirror_names: [m_plus, m_minus]
+    # mirror_corners: [...]  # four ordered xyz corners for each named mirror
     # pub_static_tf[optional]: when this flag is set to True, the driver will
     # broadcast the TF transforms for the imu/sensor/lidar frames. Prevent the
     # driver from broadcasting TF transforms by setting this parameter to False.

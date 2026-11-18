@@ -18,6 +18,8 @@
 #include "point_cloud_compose.h"
 #include "lidar_packet_handler.h"
 #include "impl/cartesian.h"
+#include "ouster_ros/mirror_lut.h"
+#include <cmath>
 
 namespace ouster_ros {
 
@@ -43,12 +45,15 @@ class PointCloudProcessor {
                         uint32_t min_range, uint32_t max_range,
                         int rows_step, const std::string& mask_path,
                         ScanToCloudFn scan_to_cloud_fn_,
-                        PointCloudProcessor_PostProcessingFn post_processing_fn_)
+                        PointCloudProcessor_PostProcessingFn post_processing_fn_,
+                        const std::vector<PlanarMirror>& mirrors = {},
+                        bool organized = true, bool destagger = true)
         : frame(frame_id),
           pixel_shift_by_row(info.format.pixel_shift_by_row),
           cloud{info.format.columns_per_frame,
                 info.format.pixels_per_column / rows_step},
           min_range_(min_range), max_range_(max_range),
+          rows_step_(rows_step), organized_(organized), destagger_(destagger),
           pc_msgs(info.num_returns()),
           scan_to_cloud_fn(scan_to_cloud_fn_),
           post_processing_fn(post_processing_fn_) {
@@ -63,6 +68,19 @@ class PointCloudProcessor {
             ouster::sdk::core::RANGE_UNIT, info.beam_to_lidar_transform,
             additional_transform, info.beam_azimuth_angles,
             info.beam_altitude_angles);
+        if (!mirrors.empty()) {
+            // Match the range-origin correction used by the SDK (mm -> m).
+            const auto& beam = info.beam_to_lidar_transform;
+            const double d_bo = (beam(2, 3) == 0 ? beam(0, 3) :
+                std::hypot(beam(0, 3), beam(2, 3))) * ouster::sdk::core::RANGE_UNIT;
+            Eigen::Matrix4d output_transform = additional_transform;
+            output_transform.topRightCorner<3, 1>() *= ouster::sdk::core::RANGE_UNIT;
+            mirror_lut = apply_mirror_lut(xyz_lut, mirrors, d_bo,
+                ouster::sdk::core::RANGE_UNIT, output_transform);
+            RCLCPP_INFO(rclcpp::get_logger("ouster_ros"),
+                "Mirror LUT: %zu of %zu beam slots redirected by %zu mirrors",
+                mirror_lut.reflected_entries.size(), mirror_lut.ids.size(), mirrors.size());
+        }
         // The ouster_ros drive currently only uses single precision when it
         // produces the point cloud. So it isn't of a benefit to compute point
         // cloud xyz coordinates using double precision (for the time being).
@@ -118,11 +136,14 @@ class PointCloudProcessor {
             ouster::cartesianT(points, range_masked, lut_direction, lut_offset,
                                min_range_, max_range_,
                                std::numeric_limits<float>::quiet_NaN());
+            invalidate_short_mirror_paths(points, range_masked, mirror_lut);
 
             scan_to_cloud_fn(cloud, points, scan_ts, lidar_scan,
                                         pixel_shift_by_row, i);
 
             pcl_toROSMsg(cloud, *pc_msgs[i]);
+            append_mirror_ids(*pc_msgs[i], points, mirror_lut, pixel_shift_by_row,
+                lidar_scan.w, lidar_scan.h, rows_step_, organized_, destagger_);
             pc_msgs[i]->header.stamp = msg_ts;
             pc_msgs[i]->header.frame_id = frame;
         }
@@ -137,11 +158,13 @@ class PointCloudProcessor {
                                      uint32_t min_range, uint32_t max_range,
                                      int rows_step, const std::string& mask_path,
                                      ScanToCloudFn scan_to_cloud_fn_,
-                                     PointCloudProcessor_PostProcessingFn post_processing_fn) {
+                                     PointCloudProcessor_PostProcessingFn post_processing_fn,
+                                     const std::vector<PlanarMirror>& mirrors = {},
+                                     bool organized = true, bool destagger = true) {
         auto handler = std::make_shared<PointCloudProcessor>(
             info, frame, apply_lidar_to_sensor_transform,
             min_range, max_range, rows_step, mask_path,
-            scan_to_cloud_fn_, post_processing_fn);
+            scan_to_cloud_fn_, post_processing_fn, mirrors, organized, destagger);
 
         return [handler](const ouster::sdk::core::LidarScan& lidar_scan, uint64_t scan_ts,
                          const rclcpp::Time& msg_ts) {
@@ -163,6 +186,10 @@ class PointCloudProcessor {
     ouster_ros::Cloud<PointT> cloud;
     uint32_t min_range_;
     uint32_t max_range_;
+    int rows_step_;
+    bool organized_;
+    bool destagger_;
+    MirrorLut mirror_lut;
     PointCloudProcessor_OutputType pc_msgs;
     ScanToCloudFn scan_to_cloud_fn;
     PointCloudProcessor_PostProcessingFn post_processing_fn;
