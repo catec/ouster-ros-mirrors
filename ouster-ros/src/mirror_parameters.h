@@ -1,3 +1,6 @@
+// Copyright (c) 2026 CATEC
+// SPDX-License-Identifier: BSD-3-Clause
+
 #pragma once
 
 #include "ouster_ros/mirror_lut.h"

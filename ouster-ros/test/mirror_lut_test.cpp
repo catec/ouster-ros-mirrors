@@ -1,3 +1,6 @@
+// Copyright (c) 2026 CATEC
+// SPDX-License-Identifier: BSD-3-Clause
+
 #include "ouster_ros/os_ros.h"
 #include "ouster_ros/mirror_lut.h"
 #include "../src/point_cloud_processor.h"

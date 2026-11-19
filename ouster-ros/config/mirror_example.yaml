@@ -1,3 +1,6 @@
+# Copyright (c) 2026 CATEC
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Driver configuration for our dual-mirror assembly.
 # Based on driver_params.yaml
 # Set sensor_hostname before launching with this setup.

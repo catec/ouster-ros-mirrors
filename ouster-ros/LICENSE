@@ -5,6 +5,7 @@ Source: https://github.com/ouster-lidar/ouster_example
 
 Files: *
 Copyright: 2018-2023 Ouster, Inc
+ 2026 CATEC (planar-mirror extension)
 License: BSD-3-Clause
 
 Files: include/optional-lite/*

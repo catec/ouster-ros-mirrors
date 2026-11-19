@@ -145,7 +145,7 @@ colcon test-result --verbose
 
 This extension builds on the Ouster ROS driver and Ouster SDK developed by **Ouster, Inc. and contributors**. General driver functionality remains documented and maintained in the [official repository](https://github.com/ouster-lidar/ouster-ros).
 
-The original copyright notices and [license](LICENSE), including the BSD-3-Clause terms and bundled third-party notices, are retained.
+The planar-mirror extension is copyright (c) 2026 CATEC and is distributed under the **BSD-3-Clause** license. The original Ouster copyright notices and [license](LICENSE), including bundled third-party notices, are retained.
 
 ## Contact and contributions
 
